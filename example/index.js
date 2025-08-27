@@ -47,6 +47,9 @@ function init() {
   var ambientLight = new THREE.AmbientLight(0x080808);
   scene.add(ambientLight);
 
+  // 增加背景.background()
+
+
   // RENDERER
 
   renderer = new THREE.WebGLRenderer();
@@ -82,15 +85,16 @@ function init() {
   renderer.domElement.addEventListener('mouseup', onMouseUp);
   renderer.domElement.addEventListener('touchend', onMouseUp);
 
+
   // CPU picking will only work if you pick on the t-pose.
-  var loader = new GLTFLoader().setPath('model/');
-  loader.load('scene.gltf', function (gltf) {
-    var mixer = new THREE.AnimationMixer(gltf.scene);
-    var action = mixer.clipAction(gltf.animations[0]);
-    action.play();
-    mixers.push(mixer);
-    scene.add(gltf.scene);
-  });
+  // var loader = new GLTFLoader().setPath('model/');
+  // loader.load('scene.gltf', function (gltf) {
+  //   var mixer = new THREE.AnimationMixer(gltf.scene);
+  //   var action = mixer.clipAction(gltf.animations[0]);
+  //   action.play();
+  //   mixers.push(mixer);
+  //   scene.add(gltf.scene);
+  // });
 
   var geometry = new THREE.SphereGeometry(100, 500, 500, 0, Math.PI * 2, 0, Math.PI * 2);
   var material = new THREE.MeshBasicMaterial({ color: 0xff00ff });
@@ -119,26 +123,102 @@ function init() {
   sprite.position.x = -450;
   sprite.position.y = -100;
   scene.add( sprite );
+
+  // Add a Line with BufferGeometry
+  addExampleLine(9);
+
+
+  console.log(scene.children);
 }
 
-function setColor(id) {
-  var obj = scene.getObjectById(id);
-  if (!obj) {
-    return;
+function addExampleLine(len) {
+  // Create geometry for the line
+  const lineGeometry = new THREE.BufferGeometry();
+  const points = [];
+  
+  for(let i=0; i<len; i++) {
+    points.push(new THREE.Vector3(100 * i, Math.sin(i) * 100, 0));
   }
-  var color = Math.random() * 0xffffff;
-  obj.traverse(obj => {
-    if (obj.material) {
-      obj.material.color.setHex(color);
-      obj.material.materialNeedsUpdate = true;
+  const positions = []
+  const colors = []
+
+  const color = new THREE.Color(1,0,0);
+
+  for ( let i = 0, l = points.length; i < l; i ++ ) {
+    positions.push( points[i].x, points[i].y, points[i].z );
+    colors.push( color.r, color.g, color.b );
+  }
+  console.log(colors);
+
+  lineGeometry.setAttribute( 'position', new THREE.Float32BufferAttribute( positions, 3 ) );
+  lineGeometry.setAttribute( 'color', new THREE.Float32BufferAttribute( colors, 3 ) );
+
+
+  // Create a material for the line
+  const lineMaterial = new THREE.LineBasicMaterial({ 
+      linewidth: 5, // in world units with size attenuation, pixels otherwise
+      vertexColors: true,
+
+      // dashed: false,
+      // alphaToCoverage: true,
+  });
+
+  // 一定要告诉它当前画布的分辨率
+  // lineMaterial.resolution.set(window.innerWidth, window.innerHeight);
+
+  // Create the line and add it to the scene
+  const line = new THREE.LineSegments(lineGeometry, lineMaterial);
+  scene.add(line);
+}
+
+function setSegmentColor(objectId, segmentIndex, hexColor) {
+  const line = scene.getObjectById(objectId);
+  if (!line || !line.geometry || !line.geometry.attributes.color) return;
+  const colors = line.geometry.attributes.color.array;
+  const c = new THREE.Color(hexColor);
+
+  // 每段两顶点，修改两顶点的 color
+  const i0 = segmentIndex * 2 * 3; // 每段占 2 顶点 * 3 分量
+
+  // 第一个顶点
+  colors[i0 + 0] = c.r;
+  colors[i0 + 1] = c.g;
+  colors[i0 + 2] = c.b;
+  // 第二个顶点
+  colors[i0 + 3] = c.r;
+  colors[i0 + 4] = c.g;
+  colors[i0 + 5] = c.b;
+
+  line.geometry.attributes.color.needsUpdate = true;
+}
+
+// resetLineColors 保持不变
+function resetLineColors() {
+  scene.traverse((object) => {
+    if (object.isLine && object.geometry.attributes.color) {
+      const colors = object.geometry.attributes.color.array;
+      for (let i = 0; i < colors.length; i += 3) {
+        colors[i] = 1;     // r = 0x00
+        colors[i + 1] = 0; // g = 0xff
+        colors[i + 2] = 0; // b = 0x00
+      }
+      object.geometry.attributes.color.needsUpdate = true;
     }
   });
 }
-
 function onMouseUp(ev) {
-  var result = demoOptions.useCPURaycast ? cpuPick(ev) : gpuPick(ev);
-  setColor(result);
+  const pick = demoOptions.useCPURaycast ? cpuPick(ev) : gpuPick(ev);
+  // pick = { objectId, segmentIndex }
+  console.log(pick);
+
+  if (!pick.objectId || pick.segmentIndex === undefined) {
+    resetLineColors();
+    return;
+  }
+  setSegmentColor(pick.objectId, pick.segmentIndex, 0xffff00);
 }
+
+
 
 function cpuPick(ev) {
   rayDirection.x = (ev.clientX / (renderer.domElement.width * pixelRatio)) * 2 - 1;
@@ -153,10 +233,27 @@ function cpuPick(ev) {
 }
 
 function gpuPick(ev) {
-  var inversePixelRatio = 1.0 / pixelRatio;
-  var objId = gpuPicker.pick(ev.clientX * inversePixelRatio, ev.clientY * inversePixelRatio);
-  return idFromObject(scene.getObjectById(objId));
+  // 先用 GPU 拾取到 LineSegments 的 objectId
+  const inv = 1.0 / pixelRatio;
+  const objectId = gpuPicker.pick(ev.clientX * inv, ev.clientY * inv);
+  const object = scene.getObjectById(objectId);
+  let segmentIndex;
+
+
+  if (object && object.isLine) {
+    // 再用 CPU Raycaster 得到是哪一段
+    rayDirection.x = (ev.clientX / (renderer.domElement.width * pixelRatio)) * 2 - 1;
+    rayDirection.y = -(ev.clientY / (renderer.domElement.height * pixelRatio)) * 2 + 1;
+    raycaster.setFromCamera(rayDirection, camera);
+    const hits = raycaster.intersectObject(object, false);
+    if (hits.length) {
+      // hits[0].index 是顶点索引，LineSegments 每两个顶点为一段
+      segmentIndex = Math.floor(hits[0].index / 2);
+    }
+  }
+  return { objectId, segmentIndex };
 }
+
 
 function idFromObject(obj) {
   var ret = obj;

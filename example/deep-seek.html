@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js线段GPU拾取示例</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
+        #container { position: absolute; width: 100%; height: 100%; }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            background-color: rgba(0,0,0,0.5);
+            padding: 5px;
+            z-index: 100;
+        }
+        #selectedInfo {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            color: white;
+            background-color: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+</head>
+<body>
+    <div id="container"></div>
+    <div id="info">Three.js线段GPU拾取示例 - 点击线段查看nodeID</div>
+    <div id="selectedInfo">当前选中的NodeID: 无</div>
+
+    <script>
+        // 全局变量
+        let container, renderer, scene, camera;
+        let pickingScene, pickingTexture, pickingRenderer;
+        let lineSegments, pickingLineSegments;
+        let nodeIDMap = {}; // 用于映射颜色到nodeID
+        let segmentCount = 100; // 创建的线段数量
+
+        init();
+        animate();
+
+        function init() {
+            // 创建主场景
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x222222);
+
+            // 初始化相机
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 5000);
+            camera.position.z = 1000;
+
+            // 初始化渲染器
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container = document.getElementById('container');
+            container.appendChild(renderer.domElement);
+
+            // 添加一些光源
+            const ambientLight = new THREE.AmbientLight(0x606060);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight.position.set(1, 1, 1).normalize();
+            scene.add(directionalLight);
+
+            // 创建拾取场景和渲染目标
+            pickingScene = new THREE.Scene();
+            pickingTexture = new THREE.WebGLRenderTarget(1, 1); // 初始大小，会在拾取时调整
+            pickingRenderer = new THREE.WebGLRenderer();
+            pickingRenderer.setClearColor(0x000000);
+
+            // 创建线段几何体
+            createLineSegments();
+
+            // 添加事件监听器
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('click', onMouseClick);
+        }
+
+        function createLineSegments() {
+            const positions = [];
+            const colors = [];
+            const pickingColors = [];
+            
+            const geometry = new THREE.BufferGeometry();
+            
+            // 为每条线段生成随机位置和颜色
+            for (let i = 0; i < segmentCount; i++) {
+                // 生成随机起点和终点
+                const x1 = Math.random() * 1000 - 500;
+                const y1 = Math.random() * 1000 - 500;
+                const z1 = Math.random() * 1000 - 500;
+                
+                const x2 = x1 + (Math.random() * 200 - 100);
+                const y2 = y1 + (Math.random() * 200 - 100);
+                const z2 = z1 + (Math.random() * 200 - 100);
+                
+                // 添加顶点位置
+                positions.push(x1, y1, z1);
+                positions.push(x2, y2, z2);
+                
+                // 为每条线段生成随机颜色（主场景显示用）
+                const color = new THREE.Color();
+                color.setHSL(Math.random(), 1.0, 0.5);
+                colors.push(color.r, color.g, color.b);
+                colors.push(color.r, color.g, color.b);
+                
+                // 为拾取场景生成唯一颜色（编码nodeID）
+                const pickingColor = encodeNodeID(i);
+                pickingColors.push(pickingColor.r, pickingColor.g, pickingColor.b);
+                pickingColors.push(pickingColor.r, pickingColor.g, pickingColor.b);
+                
+                // 存储颜色到nodeID的映射
+                const colorKey = `${pickingColor.r.toFixed(3)}_${pickingColor.g.toFixed(3)}_${pickingColor.b.toFixed(3)}`;
+                nodeIDMap[colorKey] = i;
+            }
+            
+            // 设置几何体属性
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            
+            // 创建主场景线段材质
+            const material = new THREE.LineBasicMaterial({
+                vertexColors: true,
+                linewidth: 2
+            });
+            
+            // 创建主场景线段
+            lineSegments = new THREE.LineSegments(geometry, material);
+            scene.add(lineSegments);
+            
+            // 创建拾取场景线段
+            const pickingGeometry = geometry.clone();
+            pickingGeometry.setAttribute('color', new THREE.Float32BufferAttribute(pickingColors, 3));
+            
+            const pickingMaterial = new THREE.LineBasicMaterial({
+                vertexColors: true,
+                linewidth: 3 // 拾取线宽略宽以便更容易选择
+            });
+            
+            pickingLineSegments = new THREE.LineSegments(pickingGeometry, pickingMaterial);
+            pickingScene.add(pickingLineSegments);
+        }
+
+        // 将nodeID编码为颜色
+        function encodeNodeID(id) {
+            // 将ID分解为RGB三个分量（0-1范围）
+            const r = ((id >> 16) & 0xff) / 255;
+            const g = ((id >> 8) & 0xff) / 255;
+            const b = (id & 0xff) / 255;
+            
+            return new THREE.Color(r, g, b);
+        }
+
+        // 从颜色解码回nodeID
+        function decodeNodeID(color) {
+            const r = Math.round(color.r * 255);
+            const g = Math.round(color.g * 255);
+            const b = Math.round(color.b * 255);
+            
+            return (r << 16) | (g << 8) | b;
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function onMouseClick(event) {
+            // 计算鼠标标准化设备坐标 (-1到+1)
+            const mouse = new THREE.Vector2();
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+            
+            // 调整拾取纹理大小以匹配渲染器
+            pickingTexture.setSize(renderer.domElement.width, renderer.domElement.height);
+            
+            // 设置相机偏移以仅渲染鼠标下的像素
+            const pixelRatio = renderer.getPixelRatio();
+            const x = (event.clientX * pixelRatio) | 0;
+            const y = (event.clientY * pixelRatio) | 0;
+            
+            camera.setViewOffset(
+                renderer.domElement.width, 
+                renderer.domElement.height,
+                x, 
+                y,
+                1, 
+                1
+            );
+            
+            // 渲染拾取场景
+            pickingRenderer.setRenderTarget(pickingTexture);
+            pickingRenderer.render(pickingScene, camera);
+            camera.clearViewOffset();
+            
+            // 读取像素颜色
+            const pixelBuffer = new Uint8Array(4);
+            pickingRenderer.readRenderTargetPixels(pickingTexture, x, y, 1, 1, pixelBuffer);
+            
+            // 将像素值转换为颜色
+            const color = new THREE.Color();
+            color.r = pixelBuffer[0] / 255;
+            color.g = pixelBuffer[1] / 255;
+            color.b = pixelBuffer[2] / 255;
+            
+            
+            // 解码nodeID
+            const nodeID = decodeNodeID(color);
+            
+            // 显示选中的nodeID
+            const selectedInfo = document.getElementById('selectedInfo');
+            // if (color.r === 0 && color.g === 0 && color.b === 0) {
+            //     // 黑色表示没有选中任何对象
+            //     selectedInfo.textContent = "当前选中的NodeID: 无";
+            // } else {
+            //     selectedInfo.textContent = `当前选中的NodeID: ${nodeID}`;
+            //     console.log("选中的NodeID:", nodeID);
+                
+            //     // 这里你可以添加对选中线段的高亮或其他处理逻辑
+            // }
+            selectedInfo.textContent = `当前选中的NodeID: ${nodeID}`;
+                console.log("选中的NodeID:", nodeID);
+            
+            // 清理渲染目标
+            pickingRenderer.setRenderTarget(null);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>

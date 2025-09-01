@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js 线条拾取系统（顶点属性）</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
+
+</head>
+
+<body>
+    <script type="module">
+
+        // 场景
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
+
+        // 相机
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 0, 100);
+
+        // 渲染器
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+
+
+
+        // 控制器
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+
+        // 创建一个1x1x1的立方体
+        const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
+        const boxMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        const cube = new THREE.Mesh(boxGeometry, boxMaterial);
+        cube.position.set(0, 0, 0); // 放置在原点
+        scene.add(cube);
+
+
+        // 创建正弦曲线管的封装函数（使用步长参数）
+        function createSineTube(startPoint, endPoint, waveHeight, waveCount,
+             stepLength = 0.1, tubeRadius = 0.1, materialOptions = { color: 0xff0000 }) 
+        {
+            // 创建正弦曲线
+            class SineCurve extends THREE.Curve {
+                constructor(start, end, height, count) {
+                    super();
+                    this.startPoint = new THREE.Vector3().copy(start);
+                    this.endPoint = new THREE.Vector3().copy(end);
+                    this.waveHeight = height;
+                    this.waveCount = count;
+                    this.direction = new THREE.Vector3().subVectors(end, start).normalize();
+                    this.length = start.distanceTo(end);
+                }
+
+                getPoint(t, optionalTarget = new THREE.Vector3()) {
+                    const point = optionalTarget;
+                    
+                    // 线性插值
+                    point.copy(this.startPoint).lerp(this.endPoint, t);
+                    
+                    // 计算正弦偏移
+                    const angle = t * Math.PI * 2 * this.waveCount;
+                    const offset = Math.sin(angle) * this.waveHeight;
+                    
+                    // 应用垂直于方向的偏移
+                    const perpendicular = new THREE.Vector3(
+                        -this.direction.y, 
+                        this.direction.x, 
+                        0
+                    ).normalize();
+                    
+                    point.add(perpendicular.multiplyScalar(offset));
+                    
+                    return point;
+                }
+            }
+
+            // 创建曲线实例
+            const curve = new SineCurve(startPoint, endPoint, waveHeight, waveCount);
+            
+            // 根据步长计算需要的分段数
+            const curveLength = curve.length;
+            const segments = Math.max(20, Math.ceil(curveLength / stepLength));
+            
+            // 创建管道几何体
+            const tubeGeometry = new THREE.TubeGeometry(
+                curve,        // 路径
+                segments,     // 根据步长计算的分段数
+                tubeRadius,    // 管半径
+                8,            // 径向分段数
+                false         // 是否闭合
+            );
+            
+            // 创建材质
+            const material = new THREE.MeshBasicMaterial(materialOptions);
+            
+            // 创建网格对象
+            const tube = new THREE.Mesh(tubeGeometry, material);
+            
+            return tube;
+        }
+
+
+
+
+        // 使用示例
+        const start = new THREE.Vector3(-10, 0, 0); // 起点
+        const end = new THREE.Vector3(10, 0, 0);    // 终点
+        let waveHeight = 0.5; // 波高（高度）
+        let waveCount = 10; // 波数
+        let stepLength = 0.1; // 步长
+        let tubeRadius = 0.1; // 管半径
+
+        const sineTube = createSineTube(start, end, 
+                            waveHeight, waveCount, stepLength, tubeRadius, 
+                            { color: 0xff0000 });
+        scene.add(sineTube);
+
+
+        // 
+
+
+        // 渲染场景
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+
+    </script>
+</body>

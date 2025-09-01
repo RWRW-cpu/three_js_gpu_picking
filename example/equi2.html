@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js 线条拾取系统（顶点属性）</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.min.js"></script>
+
+</head>
+
+<body>
+    <script type="module">
+
+        // 场景
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
+
+        // 相机
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 0, 5);
+
+
+
+        // 渲染器
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+
+        // 设置Z轴向上
+        camera.up.set(0, 0, 1);
+
+        // 控制器
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+
+        // 0,0,0 创建坐标轴辅助
+        const axesHelper = new THREE.AxesHelper(5);
+        axesHelper.position.set(0, 0, 0);
+        axesHelper.material.depthTest = false; // 关闭深度测试
+        axesHelper.renderOrder = 1; // 渲染顺序设为1
+        scene.add(axesHelper);
+
+
+        // 创建一个1x1x1的立方体
+        const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
+        const boxMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+        const cube = new THREE.Mesh(boxGeometry, boxMaterial);
+        cube.position.set(0, 0, 0); // 放置在原点
+        scene.add(cube);
+
+
+        // 创建红外线圆柱
+        // 创建红外线圆柱群体
+        function createLaser(startPoint, endPoint, count, width, alpha, radius) {
+            const group = new THREE.Group();
+            const distance = startPoint.distanceTo(endPoint);
+            const direction = new THREE.Vector3().subVectors(endPoint, startPoint).normalize();
+            
+            // 计算垂直于方向的向量用于偏移
+            const perpendicular = new THREE.Vector3(-direction.y, direction.x, 0).normalize();
+            
+            // 如果提供了 alpha 角度，绕方向向量旋转垂直向量
+            if (alpha !== undefined && alpha !== 0) {
+                const rotationQuaternion = new THREE.Quaternion();
+                rotationQuaternion.setFromAxisAngle(direction, alpha * Math.PI / 180);
+                perpendicular.applyQuaternion(rotationQuaternion);
+            }
+            
+            // 计算总宽度和每个圆柱体的偏移量
+            const totalWidth = width;
+            const startOffset = -totalWidth / 2 + radius;
+            
+            for (let i = 0; i < count; i++) {
+                const geometry = new THREE.CylinderGeometry(radius, radius, distance, 32);
+                const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+                const cylinder = new THREE.Mesh(geometry, material);
+                
+                // 设置四元数旋转
+                const quaternion = new THREE.Quaternion();
+                quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+                cylinder.setRotationFromQuaternion(quaternion);
+                
+                // 设置位置（圆柱体的中心点）
+                const center = new THREE.Vector3().addVectors(startPoint, endPoint).multiplyScalar(0.5);
+                cylinder.position.copy(center);
+                
+                // 添加横向偏移以实现并排排列
+                const offset = startOffset + i * (totalWidth / (count - 1));
+                cylinder.position.addScaledVector(perpendicular, offset);
+                
+                group.add(cylinder);
+            }
+            
+            return group;
+        }
+
+        // 使用示例
+        const start = new THREE.Vector3(0, 0, 0);
+        const end = new THREE.Vector3(0.5, 0, 0.5);
+        let radius = 0.001;
+        let count = 10;
+        let width = 1;
+        let alpha = 180;
+        // 群体的起点，终点，高度
+        // 每个圆柱的高度为起点和终点的距离，半径为0.1
+        const laser = createLaser(start, end, count, width, alpha, radius);
+        scene.add(laser);
+
+        // 渲染场景
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+
+    </script>
+</body>

@@ -11,7 +11,7 @@
             margin: 0;
             overflow: hidden;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            background: linear-gradient(135deg, #f3f3f5 0%, #16213e 100%);
         }
 
         canvas {
@@ -110,7 +110,7 @@
     <script>
         // 场景设置
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x000000);
+        scene.background = new THREE.Color(0xffffff);
 
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         camera.position.z = 10;
@@ -126,24 +126,31 @@
         let animationSpeed = 0.5;
 
 
-        function decodeNodeID(color) {
-            const r = Math.floor(color.r * 255);
-            const g = Math.floor(color.g * 255);
-            const b = Math.floor(color.b * 255);
-            const a = Math.floor(color.a * 255);
-            return (r << 24) + (g << 16) + (b << 8) + a;
+        function decodeCompressedID(color) {
+
+            const compressedValue = (color[0] << 24) + (color[1] << 16) + (color[2] << 8) + color[3];
+            
+            // 解压出fid和nodeID
+            const fid = (compressedValue >> 16) & 0xFFFF;
+            const nodeID = compressedValue & 0xFFFF;
+            return new THREE.Vector2(fid, nodeID);
+        }
+        
+        function compress(fid, nodeID) {
+            // 确保fid和nodeID在0-65535范围内
+            return (fid << 16) | nodeID;
         }
 
         // 全局拾取材质
         const pickingMaterial = new THREE.ShaderMaterial({
             vertexShader: `
-                attribute float nodeID;
-                varying vec4 vNodeID;
+                attribute float compressedID;
+                varying vec4 vCompressedID;
                 
                 void main() {
-                    // 将float转换为int进行位运算
-                    int id = int(nodeID);
-                    vNodeID = vec4(
+                    // 将压缩的ID转换为vec4颜色格式
+                    int id = int(compressedID);
+                    vCompressedID = vec4(
                         float((id >> 24) & 255) / 255.0,
                         float((id >> 16) & 255) / 255.0,
                         float((id >> 8) & 255) / 255.0,
@@ -153,15 +160,16 @@
                 }
             `,
             fragmentShader: `
-                varying vec4 vNodeID;
+                varying vec4 vCompressedID;
                 
                 void main() {
-                    gl_FragColor = vNodeID;
+                    gl_FragColor = vCompressedID;
                 }
             `
         });
+
         // 创建线函数（使用顶点属性）
-        function createLine(points, colors, lineWidth = 5, nodeIDs) {
+        function createLine(points, colors, lineWidth = 5,fids, nodeIDs) {
             // 实际渲染用的线材质
             const material = new THREE.LineBasicMaterial({
                 vertexColors: true,
@@ -176,14 +184,18 @@
             const pointArray = new Float32Array(points);
             const colorArray = new Float32Array(colors);
             const vertexCount = pointArray.length / 3;
-            const nodeIDArray = new Float32Array(vertexCount);
+            const compressedIDArray = new Float32Array(vertexCount);
 
             for (let i = 0; i < vertexCount; i++) {
-                nodeIDArray[i] = nodeIDs[i]; // 直接存储原始nodeID，不再预编码
+                // 确保使用正确的位运算压缩
+                
+                compressedIDArray[i] = compress(parseInt(fids[i]), nodeIDs[i]);
             }
+    
             geometry.setAttribute('position', new THREE.BufferAttribute(pointArray, 3));
             geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3, true));
-            geometry.setAttribute('nodeID', new THREE.BufferAttribute(nodeIDArray, 1));
+            geometry.setAttribute('compressedID', new THREE.BufferAttribute(compressedIDArray, 1));
+
 
             // 存储映射关系
             // idToLine.set(nodeIDs[0], {
@@ -219,12 +231,18 @@
                 1, 1, 1, 1, 0, 2,
                 1, 0, 2, 2, 2, 2
             ];
+            // 2^63是9,223,372,036,854,775,808
+            const fids = [
+                "9223372036854775808","9223372036854775808",
+                "9223372036854775809","9223372036854775809",
+                "9223372036854775810","9223372036854775810",
+            ];
             const nodeIDs = [
                 1,1,
                 2,2,
                 3,3,
             ]
-            createLine(points, colors, 5, nodeIDs);
+            createLine(points, colors, 5, fids, nodeIDs);
 
         }
 
@@ -253,21 +271,16 @@
             );
 
             // 解码nodeID
-            const color = {
-                r: pixelBuffer[0] / 255,
-                g: pixelBuffer[1] / 255,
-                b: pixelBuffer[2] / 255,
-                a: pixelBuffer[3] / 255
-            };
-            console.log(color);
 
             //1 对应颜色r: 0, g: 0, b: 0, a: 0.00392156862745098
             //2 对应颜色r: 0, g: 0, b: 0, a: 0.00784313725490196
             //3 对应颜色r: 0, g: 0, b: 0, a: 0.011764705882352941
 
 
-            const nodeID = decodeNodeID(color);
-            console.log(nodeID)
+            const dipress = decodeCompressedID(pixelBuffer);
+            const fid = dipress.x;
+            const nodeID = dipress.y;
+            console.log('fid:', fid, 'nodeID:', nodeID);
 
             // 恢复渲染目标
             renderer.setRenderTarget(null);

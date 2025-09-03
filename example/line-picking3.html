@@ -131,14 +131,14 @@
             const compressedValue = (color[0] << 24) + (color[1] << 16) + (color[2] << 8) + color[3];
             
             // 解压出fid和nodeID
-            const fid = (compressedValue >> 16) & 0xFFFF;
-            const nodeID = compressedValue & 0xFFFF;
-            return new THREE.Vector2(fid, nodeID);
+            const numA = (compressedValue >> 16) & 0xFFFF;
+            const numB = compressedValue & 0xFFFF;
+            return new THREE.Vector2(numA, numB);
         }
-        
-        function compress(fid, nodeID) {
+
+        function compress(numA, numB) {
             // 确保fid和nodeID在0-65535范围内
-            return (fid << 16) | nodeID;
+            return (numA << 16) | numB;
         }
 
         // 全局拾取材质
@@ -169,7 +169,7 @@
         });
 
         // 创建线函数（使用顶点属性）
-        function createLine(points, colors, lineWidth = 5,fids, nodeIDs) {
+        function createLine(points, colors, lineWidth = 5,geometryIndex, nodeIDs) {
             // 实际渲染用的线材质
             const material = new THREE.LineBasicMaterial({
                 vertexColors: true,
@@ -189,7 +189,7 @@
             for (let i = 0; i < vertexCount; i++) {
                 // 确保使用正确的位运算压缩
                 
-                compressedIDArray[i] = compress(parseInt(fids[i]), nodeIDs[i]);
+                compressedIDArray[i] = compress(parseInt(geometryIndex[i]), nodeIDs[i]);
             }
     
             geometry.setAttribute('position', new THREE.BufferAttribute(pointArray, 3));
@@ -232,17 +232,17 @@
                 1, 0, 2, 2, 2, 2
             ];
             // 2^63是9,223,372,036,854,775,808
-            const fids = [
-                "9223372036854775808","9223372036854775808",
-                "9223372036854775809","9223372036854775809",
-                "9223372036854775810","9223372036854775810",
+            const geometryIndex = [
+                1,1,
+                3,3,
+                2,2,
             ];
             const nodeIDs = [
                 1,1,
                 2,2,
                 3,3,
             ]
-            createLine(points, colors, 5, fids, nodeIDs);
+            createLine(points, colors, 5, geometryIndex, nodeIDs);
 
         }
 

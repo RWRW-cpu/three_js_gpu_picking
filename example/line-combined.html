@@ -127,34 +127,28 @@
 
 
         function decodeCompressedID(color) {
-            const compressedValue = (color[0] << 24) + (color[1] << 16) + (color[2] << 8) + color[3];
-            
-            // 解压出geometryIndex和nodeID，使用24位和8位分配
-            const geometryIndex = (compressedValue >> 12) & 0xFFFFF; // 20位，支持0-1048575
-            const nodeID = compressedValue & 0xFFF; // 12位，支持0-4095
-            return new THREE.Vector2(geometryIndex, nodeID);
+
+            // 
+            const numA = color[0] << 8 | color[1];
+            const numB = color[2] << 8 | color[3];
+            return new THREE.Vector2(numA, numB);
         }
 
-        function compress(geometryIndex, nodeID) {
-            // 确保geometryIndex在0-16777215范围内，nodeID在0-255范围内
-            return (geometryIndex << 12) | nodeID;
+        function compress(numA, numB,array) {
+            array[0] = (numA>>8) & 0xff;
+            array[1] = (numA) & 0xff;
+            array[2] = (numB>>8) & 0xff;
+            array[3] = (numB) & 0xff;
         }
 
         // 全局拾取材质
         const pickingMaterial = new THREE.ShaderMaterial({
             vertexShader: `
-                attribute float compressedID;
+                attribute vec4 compressedID;
                 varying vec4 vCompressedID;
                 
                 void main() {
-                    // 将压缩的ID转换为vec4颜色格式
-                    int id = int(compressedID);
-                    vCompressedID = vec4(
-                        float((id >> 24) & 255) / 255.0,
-                        float((id >> 16) & 255) / 255.0,
-                        float((id >> 8) & 255) / 255.0,
-                        float(id & 255) / 255.0
-                    );
+                    vCompressedID = compressedID / 255.0;   
                     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
                 }
             `,
@@ -183,18 +177,21 @@
             const pointArray = new Float32Array(points);
             const colorArray = new Float32Array(colors);
             const vertexCount = pointArray.length / 3;
-            const compressedIDArray = new Float32Array(vertexCount);
+            const compressedIDArray = new Uint8Array(vertexCount*4);
 
             for (let i = 0; i < vertexCount; i++) {
                 // 确保使用正确的位运算压缩
-                
-                compressedIDArray[i] = compress(parseInt(geometryIndex[i]), nodeIDs[i]);
+                let array = new Uint8Array(4);
+                compress(geometryIndex[i], nodeIDs[i], array);
+                compressedIDArray[i * 4] = array[0];
+                compressedIDArray[i * 4 + 1] = array[1];
+                compressedIDArray[i * 4 + 2] = array[2];
+                compressedIDArray[i * 4 + 3] = array[3];
             }
-            console.log('compressedIDArray:', compressedIDArray);
     
             geometry.setAttribute('position', new THREE.BufferAttribute(pointArray, 3));
             geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3, true));
-            geometry.setAttribute('compressedID', new THREE.BufferAttribute(compressedIDArray, 1));
+            geometry.setAttribute('compressedID', new THREE.BufferAttribute(compressedIDArray, 4),false);
 
 
             // 存储映射关系

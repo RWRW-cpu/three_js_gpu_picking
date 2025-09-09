@@ -44,15 +44,15 @@
         scene.add(axesHelper);
 
 
-        // 创建一个1x1x1的立方体
-        const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
-        const boxMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-        const cube = new THREE.Mesh(boxGeometry, boxMaterial);
-        cube.position.set(0, 0, 0); // 放置在原点
-        scene.add(cube);
+        // // 创建一个1x1x1的立方体
+        // const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
+        // const boxMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+        // const cube = new THREE.Mesh(boxGeometry, boxMaterial);
+        // cube.position.set(0, 0, 0); // 放置在原点
+        // scene.add(cube);
 
 
-        // 创建红外线圆柱
+
         // 创建红外线圆柱群体
         function createLaser(startPoint, endPoint, count, width, alpha, radius) {
             const group = new THREE.Group();

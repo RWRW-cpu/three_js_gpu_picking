@@ -33,26 +33,36 @@
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
 
 
-        // 创建一个1x1x1的立方体
+        // // 创建一个1x1x1的立方体
         const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
-        const boxMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+        const boxMaterial = new THREE.MeshBasicMaterial({ color: 0x00ff00 ,wireframe: true});
         const cube = new THREE.Mesh(boxGeometry, boxMaterial);
         cube.position.set(0, 0, 0); // 放置在原点
         scene.add(cube);
 
+        // [0,0,0]  [1,0,0]  [1,1,0]  [0,1,0]
+        // [0,0,1]  [1,0,1]  [1,1,1]  [0,1,1]
+        // 画点
+        const pointsGeometry = new THREE.BufferGeometry();
+        const pointsMaterial = new THREE.PointsMaterial({ color: 0xff0000 });
+        const points = new THREE.Points(pointsGeometry, pointsMaterial);
+        scene.add(points);
+
+
 
         // 创建正弦曲线管的封装函数（使用步长参数）
         function createSineTube(startPoint, endPoint, waveHeight, waveCount,
-             stepLength = 0.1, tubeRadius = 0.1, materialOptions = { color: 0xff0000 }) 
+             stepLength = 0.1, tubeRadius = 0.1, materialOptions = { color: 0xff0000 }, alpha = 0) 
         {
             // 创建正弦曲线
             class SineCurve extends THREE.Curve {
-                constructor(start, end, height, count) {
+                constructor(start, end, height, count, alpha) {
                     super();
                     this.startPoint = new THREE.Vector3().copy(start);
                     this.endPoint = new THREE.Vector3().copy(end);
                     this.waveHeight = height;
                     this.waveCount = count;
+                    this.alpha = alpha; // 旋转角度（弧度）
                     this.direction = new THREE.Vector3().subVectors(end, start).normalize();
                     this.length = start.distanceTo(end);
                 }
@@ -67,12 +77,19 @@
                     const angle = t * Math.PI * 2 * this.waveCount;
                     const offset = Math.sin(angle) * this.waveHeight;
                     
-                    // 应用垂直于方向的偏移
-                    const perpendicular = new THREE.Vector3(
+                    // 计算垂直于方向的向量
+                    let perpendicular = new THREE.Vector3(
                         -this.direction.y, 
                         this.direction.x, 
                         0
                     ).normalize();
+                    
+                    // 如果alpha不为0，绕方向向量旋转垂直向量
+                    if (this.alpha !== 0) {
+                        const rotationMatrix = new THREE.Matrix4();
+                        rotationMatrix.makeRotationAxis(this.direction, this.alpha);
+                        perpendicular.applyMatrix4(rotationMatrix);
+                    }
                     
                     point.add(perpendicular.multiplyScalar(offset));
                     
@@ -81,7 +98,7 @@
             }
 
             // 创建曲线实例
-            const curve = new SineCurve(startPoint, endPoint, waveHeight, waveCount);
+            const curve = new SineCurve(startPoint, endPoint, waveHeight, waveCount, alpha);
             
             // 根据步长计算需要的分段数
             const curveLength = curve.length;
@@ -115,10 +132,11 @@
         let waveCount = 10; // 波数
         let stepLength = 0.1; // 步长
         let tubeRadius = 0.1; // 管半径
+        let alpha = Math.PI / 2; // 旋转45度
 
         const sineTube = createSineTube(start, end, 
                             waveHeight, waveCount, stepLength, tubeRadius, 
-                            { color: 0xff0000 });
+                            { color: 0xff0000 }, alpha);
         scene.add(sineTube);
 
 

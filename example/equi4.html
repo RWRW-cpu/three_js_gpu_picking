@@ -51,6 +51,13 @@
         cube.position.set(0, 0, 0); // 放置在原点
         scene.add(cube);
 
+        const cube1 = cube.clone();
+        cube1.scale.set(0.05,0.05,0.05);
+        scene.add(cube1);
+
+        const cube2 = cube.clone();
+        cube2.scale.set(0.05,0.05,0.05);
+        scene.add(cube2);
 
 
         // 创建红外线圆柱群体
@@ -78,7 +85,7 @@
             
             // 计算总宽度和每个圆柱体的偏移量
             const totalWidth = between * (segment - 1);
-            const startOffset = -totalWidth / 2 + radius;
+            const startOffset = 0;
             
             for (let i = 0; i < segment; i++) {
                 const geometry = new THREE.CylinderGeometry(radius, radius, distance, 32);
@@ -105,12 +112,12 @@
         }
 
         // 使用示例
-        const start = new THREE.Vector3(0.5, 0, 0);
-        const end = new THREE.Vector3(0.5, 0, 1);
-        let radius = 0.001; // 圆柱的半径
+        const start = new THREE.Vector3(0, -1, 1);
+        const end = new THREE.Vector3(0, 1, 1);
+        let radius = 0.01; // 圆柱的半径
         let segment = 10;  // 圆柱的数量
-        let between =0.1; // 圆柱之间的间距
-        let alpha = 90;   // 绕中心的圆柱旋转角度
+        let between = 0.1; // 圆柱之间的间距
+        let alpha = 30;   // alpha绕start和end的向量的圆柱群体旋转角度
         const laser = createLaser(start, end, segment, between, alpha, radius);
         scene.add(laser);
 
@@ -120,12 +127,8 @@
             controls.update();
             renderer.render(scene, camera);
         }
-
-        const laser2 = createLaser(new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(1, 0.5, 1), segment, between, alpha, radius);
-        scene.add(laser2);
-
-        // laser2的角度跟laser成正交90度
-        laser2.rotation.z = Math.PI / 2;
+        cube1.position.copy(start);
+        cube2.position.copy(end);
         animate();
 
 

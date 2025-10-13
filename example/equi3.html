@@ -40,9 +40,24 @@
         scene.add(cube);
         
 
+        const cube1 = cube.clone();
+        cube1.position.set(20, 0, 0); // 
+        cube1.scale.set(2,2,2);
+        scene.add(cube1);
+
+        const cube2 = cube.clone();
+        cube2.position.set(20, 20, 0); //
+        cube2.scale.set(3,3,3);
+        scene.add(cube2);
+
+        const cube3 = cube.clone();
+        cube3.position.set(0, 20, 0); //
+        cube3.scale.set(4,4,4);
+        scene.add(cube3);
+
         // 创建createElec
         function createElec(points, outDirection, radius,
-                            outOffset, downOffset,  height, step,
+                            outOffset1, downOffset1,  downOffset2, step,
                             materialOptions = { color: 0xff0000 }) {
             // 计算从起点到终点的方向向量
             const direction = new THREE.Vector3().subVectors(points[1], points[0]).normalize();
@@ -59,7 +74,7 @@
         
             
             // 计算每个杆子下的分段数
-            const dis = Math.pow(height + downOffset, 2) + Math.pow(outOffset, 2);
+            const dis = Math.pow(downOffset2 + downOffset1, 2) + Math.pow(outOffset1, 2);
             const segments = Math.max(20, Math.ceil( Math.sqrt(dis) / step)); 
 
             // 
@@ -76,20 +91,21 @@
                 
                 // 计算杆子顶部第二个点（偏移后的位置）
                 const topOffsetPosition = new THREE.Vector3().copy(topPosition);
-                topOffsetPosition.addScaledVector(outDir, outOffset);
-                topOffsetPosition.addScaledVector(downDir, downOffset);
+                topOffsetPosition.addScaledVector(outDir, outOffset1);
+                topOffsetPosition.addScaledVector(downDir, downOffset1);
                 
                 // 计算杆子底部位置
                 const bottomPosition = new THREE.Vector3().copy(topOffsetPosition);
-                bottomPosition.addScaledVector(downDir, height);
-                bottomPosition.addScaledVector(outDir, -1);
+                bottomPosition.addScaledVector(downDir, downOffset2);
+                bottomPosition.addScaledVector(outDir, 0);
 
-                const CurvePath = new THREE.QuadraticBezierCurve3(
-                    topPosition, topOffsetPosition, bottomPosition
-                    ,100,
-                    100)
+                // 3D直线线段
+                const line1 = new THREE.LineCurve3(topPosition, topOffsetPosition);
+                const line2 = new THREE.LineCurve3(topOffsetPosition, bottomPosition);
+                const CurvePath = new THREE.CurvePath(); 
+                CurvePath.curves.push(line1, line2);
                 // 取点用于创建面
-                const pos = CurvePath.getPoints(50);
+                const pos = CurvePath.getPoints(10);
                 
                 // console.log(pos);
                 // 创建管状几何体
@@ -149,20 +165,21 @@
         }
         
         const points = [
-            new THREE.Vector3(-10, 0, 0),
             new THREE.Vector3(0, 0, 0),
-            new THREE.Vector3(0, 10, 0),
-            new THREE.Vector3(-10, 10, 0),
+            new THREE.Vector3(20, 0, 0),
+            new THREE.Vector3(20, 20, 0),
+            new THREE.Vector3(0, 20, 0)
         ];
         let out = true;         // out方向
         let radius = 1          // 管道半径
         
-        let outOffset = 7;      // A, B 点的偏移距离 偏移距离向out方向
-        let downOffset = 1;     // A, B 点的偏移距离 偏移距离向down方向
-        let height = 5;         // B, C 点的高度差
-        let step = 0.1;         // 步长
+        let outOffset1 = 7;        // A, B 点的偏移距离 偏移距离向out方向
+        let outOffset2 = 7;        // A, B 点的偏移距离 偏移距离向out方向
+        let downOffset1 = 1;       // A, B 点的偏移距离 偏移距离向down方向
+        let downOffset2 = 5;       // B, C 点的高度差
+        let step = 0.1;            // 步长
         
-        createElec(points, out, radius, outOffset, downOffset,  height, step,
+        createElec(points, out, radius, outOffset1, downOffset1,  downOffset2, step,
             { color: 0xff2222,side: THREE.DoubleSide });
 
         // 渲染场景

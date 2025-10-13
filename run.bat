@@ -3,7 +3,6 @@ tsc concaveman-tests.ts && node concaveman-tests.js
 
 
 $env:PATH += ";D:\code\w_node\nodejs\node-v16.13.1-win-x64"
-npm run dev
 npm run start
 
 

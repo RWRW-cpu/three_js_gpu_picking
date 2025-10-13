@@ -216,27 +216,38 @@
         }
         
         // 创建拾取渲染目标
-        const pixelBuffer = new Uint8Array(4);
-        const pickingTexture = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+        const pixelBuffer = new Uint8Array(4*5*5); // 读取10x10像素
+        const pickingTexture = new THREE.WebGLRenderTarget(5, 5);
         
         // 处理点击事件
         function onMouseClick(event) {
-            const mouse = new THREE.Vector2();
-            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            let ratio = window.devicePixelRatio;
+
+            camera.setViewOffset(
+                window.innerWidth * ratio,
+                window.innerHeight * ratio,
+                event.clientX * ratio ,  // 中心点向左偏移1像素
+                event.clientY * ratio ,  // 中心点向上偏移1像素
+                5,                        // 宽度改为10
+                5                         // 高度改为10
+            );
             
             // 先渲染拾取场景，使用 overrideMaterial
+            renderer.renderLimitNum = 1; // 限制渲染次数，避免多次调用
             renderer.setRenderTarget(pickingTexture);
             scene.overrideMaterial = pickingMaterial;
+            renderer.clear();
             renderer.render(scene, camera);
+
+            scene.renderLimitNum =100;
             scene.overrideMaterial = null;
+            camera.clearViewOffset();
             
             // 读取像素
             renderer.readRenderTargetPixels(
                 pickingTexture, 
-                (mouse.x * 0.5 + 0.5) * window.innerWidth, 
-                (mouse.y * 0.5 + 0.5) * window.innerHeight, 
-                1, 1, pixelBuffer
+                0, 0,
+                5, 5, pixelBuffer
             );
             
             // 解码nodeID
@@ -247,6 +258,7 @@
                 a: pixelBuffer[3] / 255
             };
             
+            console.log(pixelBuffer);
             const nodeID = decodeNodeID(color);
             
             // 恢复渲染目标

@@ -28,6 +28,8 @@
 
         // 控制器
         const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        // controls键盘控制
+        controls.enableKeys = true;
 
         //  设置Z轴为向上方向
         camera.up.set(0, 0, 1);
@@ -55,20 +57,109 @@
         cube3.scale.set(4,4,4);
         scene.add(cube3);
 
+        
+
+
         // 创建createElec
-        function createElec(points, outDirection, radius,
+        function createElec(i_points, bOutDirection, radius,
                             outOffset1, downOffset1,  downOffset2, step,
                             materialOptions = { color: 0xff0000 }) {
-            // 计算从起点到终点的方向向量
-            const direction = new THREE.Vector3().subVectors(points[1], points[0]).normalize();
             
-            // 计算正交方向（out方向）
-            const zAxis = new THREE.Vector3(0, 0, 1);
-            const outDir = new THREE.Vector3().crossVectors(direction, zAxis).normalize();
-            if (!outDirection) {
-                outDir.negate();
+            const elecGroup = new THREE.Group();
+            const meshGroups = new THREE.Group();
+            const tubeGroups = new THREE.Group();
+
+            function computePos(bottomPosition, outDir, downDir, outOffset1, downOffset1, downOffset2){
+                
+                // 从底部位置反向计算顶部偏移位置
+                const topOffsetPosition = new THREE.Vector3().copy(bottomPosition);
+                topOffsetPosition.addScaledVector(downDir, -downOffset2); // 向上移动downOffset2距离
+                topOffsetPosition.addScaledVector(outDir, 0); // out方向不变
+                
+                // 从顶部偏移位置反向计算顶部位置
+                const topPosition = new THREE.Vector3().copy(topOffsetPosition);
+                topPosition.addScaledVector(downDir, -downOffset1); // 向上移动downOffset1距离
+                topPosition.addScaledVector(outDir, -outOffset1); // 反向移动outOffset1距离
+            
+                return {
+                    topPosition,
+                    topOffsetPosition,
+                    bottomPosition
+                }
             }
-            
+
+            function computeOutDir(dir, negate) {
+                const zAxis = new THREE.Vector3(0, 0, 1);
+                const outDir = new THREE.Vector3().crossVectors(dir, zAxis).normalize();
+                if(negate) {
+                    outDir.negate();
+                }
+                return outDir;
+            }
+
+
+            function createTubeImpl(topPosition, topOffsetPosition, bottomPosition, segments, radius, materialOptions) {
+                // 3D直线线段
+                const line1 = new THREE.LineCurve3(topPosition, topOffsetPosition);
+                const line2 = new THREE.LineCurve3(topOffsetPosition, bottomPosition);
+                const CurvePath = new THREE.CurvePath(); 
+                CurvePath.curves.push(line1, line2);
+                
+                // 创建管状几何体
+                const tubeGeometry = new THREE.TubeGeometry(
+                    CurvePath,  // 路径
+                    segments,   // 分段数
+                    radius,     // 管道半径
+                    6,         // 径向分段数   
+                    false       // 是否闭合
+                );
+                
+                // 创建材质
+                const material = new THREE.MeshBasicMaterial(materialOptions);
+                const tube = new THREE.Mesh(tubeGeometry, material);
+
+                tubeGroups.add(tube);
+                
+                // 返回路径点用于后续创建网格
+                return CurvePath.getPoints(3);
+            }
+
+            function createMeshImpl(point, prePoint) {
+                if(prePoint.length === 0) return;
+                
+                // 例如1 四边形：pos[0],point[1],prePoint[1],prePoint[0]
+                // 例如2 四边形：pos[1],point[2],prePoint[2],prePoint[1]
+                for (let j = 0; j < point.length -1 ; j++) {
+                    const geometry = new THREE.BufferGeometry();
+                    const vertices = new Float32Array([
+                        // 顶点1: point[j]
+                        point[j].x, point[j].y, point[j].z,
+                        // 顶点2: point[j+1]
+                        point[j+1].x, point[j+1].y, point[j+1].z,
+                        // 顶点3: prePoint[j+1]
+                        prePoint[j+1].x, prePoint[j+1].y, prePoint[j+1].z,
+                        // 顶点4: prePoint[j]
+                        prePoint[j].x, prePoint[j].y, prePoint[j].z
+                    ]);
+                    
+                    // 设置顶点位置
+                    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                    
+                    // 设置索引（两个三角形组成四边形）
+                    const indices = new Uint32Array([0, 1, 2, 0, 2, 3]);
+                    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+                    
+                    
+                    const material = new THREE.MeshBasicMaterial({ 
+                        color: 0x0ff00, 
+                        side: THREE.DoubleSide,
+                    });
+                    const mesh = new THREE.Mesh(geometry, material);
+                    meshGroups.add(mesh);
+                }
+            }
+
+                                
             // 计算down方向（向下方向）
             const downDir = new THREE.Vector3(0, 0, -1);
         
@@ -77,110 +168,111 @@
             const dis = Math.pow(downOffset2 + downOffset1, 2) + Math.pow(outOffset1, 2);
             const segments = Math.max(20, Math.ceil( Math.sqrt(dis) / step)); 
 
-            // 
-            const point = [];
-            const pre = [];
+            let prePoint = [];
 
-
-            let len = points.length;
+            let len = i_points.length;
+            
             // 创建每个杆子
             for (let i = 0; i < len ; i++) {
-                // 计算杆子顶部位置
-                const topPosition = points[i];
-                console.log(topPosition);
-                
-                // 计算杆子顶部第二个点（偏移后的位置）
-                const topOffsetPosition = new THREE.Vector3().copy(topPosition);
-                topOffsetPosition.addScaledVector(outDir, outOffset1);
-                topOffsetPosition.addScaledVector(downDir, downOffset1);
-                
-                // 计算杆子底部位置
-                const bottomPosition = new THREE.Vector3().copy(topOffsetPosition);
-                bottomPosition.addScaledVector(downDir, downOffset2);
-                bottomPosition.addScaledVector(outDir, 0);
+                let direction = new THREE.Vector3();
+                let nextDirection = new THREE.Vector3();
 
-                // 3D直线线段
-                const line1 = new THREE.LineCurve3(topPosition, topOffsetPosition);
-                const line2 = new THREE.LineCurve3(topOffsetPosition, bottomPosition);
-                const CurvePath = new THREE.CurvePath(); 
-                CurvePath.curves.push(line1, line2);
-                // 取点用于创建面
-                const pos = CurvePath.getPoints(10);
-                
-                // console.log(pos);
-                // 创建管状几何体
-                const tubeGeometry = new THREE.TubeGeometry(
-                    CurvePath,  // 路径
-                    segments,   // 分段数
-                    radius,     // 管道半径
-                    10,         // 径向分段数   
-                    false       // 是否闭合
-                );
-                // 创建材质
-                const material = new THREE.MeshBasicMaterial(materialOptions);
-                const tube = new THREE.Mesh(tubeGeometry, material);
-                scene.add(tube);
+                // 计算当前杆子的方向    
+                if(i == 0) {
+                    direction = new THREE.Vector3().subVectors(i_points[0], i_points[1]).normalize();
+                }
+                else{
+                    direction = new THREE.Vector3().subVectors(i_points[i-1], i_points[i]).normalize();
+                }
+                // 计算正交方向（out方向）
+                const outDir = computeOutDir(direction, bOutDirection)
 
-                if(pre.length>0){
-                    // 例如1 四边形：pos[0],pos[1],pre[1],pre[0]
-                    // 例如2 四边形：pos[1],pos[2],pre[2],pre[1]
 
-                    for (let i = 0; i < pos.length -1 ; i++) {
-                        const geometry = new THREE.BufferGeometry();
-                        const vertices = new Float32Array([
-                            // 顶点1: points[i]
-                            pos[i].x, pos[i].y, pos[i].z,
-                            // 顶点2: points[i+1]
-                            pos[i+1].x, pos[i+1].y, pos[i+1].z,
-                            // 顶点3: pre[i+1]
-                            pre[i+1].x, pre[i+1].y, pre[i+1].z,
-                            // 顶点4: pre[i]
-                            pre[i].x, pre[i].y, pre[i].z
-                        ]);
+
+                if (i != len - 1 &&  i != 0) {
+                    nextDirection = new THREE.Vector3().subVectors(i_points[i], i_points[i+1]).normalize();
+
+                    const nextOutDir = computeOutDir(nextDirection, bOutDirection)
+                    
+                     // 判断outDir和nextOutDir是否完全同方向
+                    const angle = outDir.angleTo(nextOutDir); 
+                    if(angle > Math.PI / 8) {
+
+
+                        // 计算杆子顶部位置
+                        const {topPosition, topOffsetPosition, bottomPosition} = computePos(i_points[i], outDir, downDir, outOffset1, downOffset1, downOffset2);
+
+
+                        // 使用createTubeImpl创建管状几何体
+                        const pos1 = createTubeImpl(topPosition, topOffsetPosition, bottomPosition, segments, radius, materialOptions);
                         
-                        // 设置顶点位置
-                        geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-                        
-                        // 设置索引（两个三角形组成四边形）
-                        const indices = new Uint32Array([0, 1, 2, 0, 2, 3]);
-                        geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-                        
-                        // 计算法线
-                        geometry.computeVertexNormals();
-                        
-                        const material = new THREE.MeshBasicMaterial({ 
-                            color: 0x0ff00, 
-                            side: THREE.DoubleSide,
-                        });
-                        const mesh = new THREE.Mesh(geometry, material);
-                        scene.add(mesh);
+                        // 取pos1
+                        createMeshImpl(pos1, prePoint);
+
+                        prePoint= [];
+                        prePoint.push(...pos1);
+                    }else{
+                        // 计算杆子顶部位置
+                        const {topPosition, topOffsetPosition, bottomPosition} = computePos(i_points[i], outDir, downDir, outOffset1, downOffset1, downOffset2);
+
+                        // 使用createTubeImpl创建管状几何体
+                        const pos = createTubeImpl(topPosition, topOffsetPosition, bottomPosition, segments, radius, materialOptions);
+
+                        // 使用createMeshImpl创建四边形网格
+                        createMeshImpl(pos, prePoint);
+
+                        // 重置point和保存pre
+                        prePoint= [];
+                        prePoint.push(...pos);
                     }
                 }
+                else{
 
-                // 重置point和保存pre
-                pre.length = 0;
-                pre.push(...pos);
-                pos.length = 0;
+                    
+                    // 计算杆子顶部位置
+                    const {topPosition, topOffsetPosition, bottomPosition} = computePos(i_points[i], outDir, downDir, outOffset1, downOffset1, downOffset2);
+
+                    // 使用createTubeImpl创建管状几何体
+                    const pos = createTubeImpl(topPosition, topOffsetPosition, bottomPosition, segments, radius, materialOptions);
+
+                    // 使用createMeshImpl创建四边形网格
+                    createMeshImpl(pos, prePoint);
+
+                    // 重置point和保存pre
+                    prePoint= [];
+                    prePoint.push(...pos);
+                }
+
             }
+            
+            elecGroup.add(meshGroups);
+            elecGroup.add(tubeGroups);
+            return elecGroup;
         }
         
-        const points = [
+
+        const i_points = [
             new THREE.Vector3(0, 0, 0),
+            new THREE.Vector3(10, 0, 0),
             new THREE.Vector3(20, 0, 0),
-            new THREE.Vector3(20, 20, 0),
-            new THREE.Vector3(0, 20, 0)
+            new THREE.Vector3(30, 0, 0),
+            new THREE.Vector3(35, 5, 0),
+            new THREE.Vector3(40, 10, 0),
+
         ];
-        let out = true;         // out方向
+
+        let out = false;         // out方向
         let radius = 1          // 管道半径
         
-        let outOffset1 = 7;        // A, B 点的偏移距离 偏移距离向out方向
-        let outOffset2 = 7;        // A, B 点的偏移距离 偏移距离向out方向
-        let downOffset1 = 1;       // A, B 点的偏移距离 偏移距离向down方向
-        let downOffset2 = 5;       // B, C 点的高度差
-        let step = 0.1;            // 步长
+        let outOffset1 = 2;        // A, B 点的偏移距离 偏移距离向out方向
+        let downOffset1 = 2;       // A, B 点的偏移距离 偏移距离向down方向
+        let outOffset2 = 5;        // A, B 点的偏移距离 偏移距离向out方向
+        let downOffset2 = 5;       // B, C 点的高度差 偏移距离向down方向
+        let step = 10;            // 步长
         
-        createElec(points, out, radius, outOffset1, downOffset1,  downOffset2, step,
+        let elec = createElec(i_points, out, radius, outOffset1, downOffset1,  downOffset2, step,
             { color: 0xff2222,side: THREE.DoubleSide });
+        scene.add(elec)
 
         // 渲染场景
         function animate() {

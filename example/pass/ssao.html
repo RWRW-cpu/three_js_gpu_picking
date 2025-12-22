@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Three.js SSAO Example</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+
+    <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/postprocessing/SSAOPass.js"></script>
+ -->
+
+  <script type="module">
+    import * as THREE from 'three';
+    import Stats from 'three/examples/jsm/libs/stats.module';
+    import { GUI } from 'three/examples/jsm/libs/dat.gui.module';
+    import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
+    import { GPUPicker } from '/src/gpupicker.js';
+    import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+    import { SSAOPass } from 'three/examples/jsm/postprocessing/SSAOPass.js';
+
+
+    // 场景、相机、渲染器
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xaaaaaa);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 50);
+    camera.position.set(3, 3, 3);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.shadowMap.enabled = true; // 启用阴影
+    document.body.appendChild(renderer.domElement);
+
+    // 性能统计
+    const stats = new Stats();
+    document.body.appendChild(stats.dom);
+
+    // 控制器
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; // 启用阻尼惯性
+    controls.dampingFactor = 0.05;
+
+    // 添加物体
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
+
+    const cube = new THREE.Mesh(geometry, material);
+    cube.castShadow = true;
+    cube.receiveShadow = true;
+    scene.add(cube);
+
+    // 地面
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(10, 10),
+      new THREE.MeshStandardMaterial({ color: 0xffffff , side: THREE.DoubleSide })
+    );
+    plane.rotation.x = -Math.PI / 2;
+    plane.position.y = -0.5;
+    plane.receiveShadow = true;
+    scene.add(plane);
+
+    scene.add(new THREE.GridHelper(10, 10));
+
+    // 灯光
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+    directionalLight.position.set(5, 5, 5);
+    directionalLight.castShadow = true;
+    directionalLight.shadow.mapSize.width = 1024;
+    directionalLight.shadow.mapSize.height = 1024;
+    scene.add(directionalLight);
+
+    // 后处理：EffectComposer + SSAO
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+
+    const ssaoPass = new SSAOPass(scene, camera, window.innerWidth, window.innerHeight);
+    ssaoPass.kernelRadius = 0.5;
+    ssaoPass.kernelSize = 32;
+    ssaoPass.minDistance = 0.005;
+    ssaoPass.maxDistance = 0.1;
+    ssaoPass.output = SSAOPass.OUTPUT.Default;
+
+    composer.addPass(ssaoPass);
+
+    // GUI
+    const gui = new GUI();
+    gui.add(ssaoPass, 'output', {
+      'Default': SSAOPass.OUTPUT.Default,
+      'SSAO Only': SSAOPass.OUTPUT.SSAO,
+      'SSAO Only + Blur': SSAOPass.OUTPUT.Blur,
+      'Beauty': SSAOPass.OUTPUT.Beauty,
+      'Depth': SSAOPass.OUTPUT.Depth,
+      'Normal': SSAOPass.OUTPUT.Normal
+    }).onChange(value => { ssaoPass.output = parseInt(value); });
+    gui.add(ssaoPass, 'kernelRadius').min(0).max(2);
+    gui.add(ssaoPass, 'minDistance').min(0.001).max(0.02);
+    gui.add(ssaoPass, 'maxDistance').min(0.01).max(0.3);
+
+    // 窗口大小调整
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // 渲染循环
+    function animate() {
+      requestAnimationFrame(animate);
+
+      stats.update();
+
+      cube.rotation.x += 0.01;
+      cube.rotation.y += 0.01;
+
+      controls.update(); // 更新控制器阻尼
+
+      composer.render(); // 使用后处理渲染
+    }
+
+    animate();
+  </script>
+</body>
+</html>

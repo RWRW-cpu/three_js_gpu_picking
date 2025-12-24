@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js 线条拾取系统（顶点属性）</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #f3f3f5 0%, #16213e 100%);
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 16px;
+            pointer-events: none;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(5px);
+        }
+
+        #selectedInfo {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px 25px;
+            border-radius: 10px;
+            font-size: 18px;
+            text-align: center;
+            min-width: 300px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(5px);
+        }
+
+        .controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 14px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(5px);
+        }
+
+        .controls h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+            padding-bottom: 5px;
+        }
+
+        .controls label {
+            display: block;
+            margin: 8px 0;
+        }
+
+        .controls input {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        .mode-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            background: #4CAF50;
+            box-shadow: 0 0 8px #4CAF50;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="info"><span class="mode-indicator"></span>点击线条来选中它们<br>当前模式: 渲染视图</div>
+    <div id="selectedInfo">未选中任何线条</div>
+
+    <div class="controls">
+        <h3>线条控制</h3>
+        <label>
+            <input type="checkbox" id="rotateScene" checked> 旋转场景
+        </label>
+        <label>
+            <input type="range" id="lineWidth" min="1" max="10" value="5" step="0.5"> 线条宽度
+        </label>
+        <label>
+            <input type="range" id="animationSpeed" min="0" max="2" value="0.5" step="0.1"> 动画速度
+        </label>
+    </div>
+
+    <script>
+        // 场景设置
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 10;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 存储线条映射关系
+        const idToLine = new Map();
+        let selectedLineId = null;
+        let rotationEnabled = true;
+        let animationSpeed = 0.5;
+
+
+ function decodeCompressedID(geometryColor, nodeColor) {
+    // 从两个颜色值重建geometryIndex和nodeID
+    const geometryValue = (geometryColor[0] << 24) + (geometryColor[1] << 16) + (geometryColor[2] << 8) + geometryColor[3];
+    const nodeValue = (nodeColor[0] << 24) + (nodeColor[1] << 16) + (nodeColor[2] << 8) + nodeColor[3];
+    
+    return new THREE.Vector2(geometryValue, nodeValue);
+}
+
+function compress(geometryIndex, nodeID) {
+    // 直接返回两个值，由着色器处理编码
+    return { geometryIndex, nodeID };
+}
+
+// 使用奇偶像素编码的拾取材质
+const pickingMaterial = new THREE.ShaderMaterial({
+    vertexShader: `
+        attribute float geometryIndex;
+        attribute float nodeID;
+        varying vec4 vGeometryIndex;
+        varying vec4 vNodeID;
+        
+        void main() {
+            // 将geometryIndex转换为颜色
+            int geoInt = int(geometryIndex);
+            vGeometryIndex = vec4(
+                float((geoInt >> 24) & 255) / 255.0,
+                float((geoInt >> 16) & 255) / 255.0,
+                float((geoInt >> 8) & 255) / 255.0,
+                float(geoInt & 255) / 255.0
+            );
+            
+            // 将nodeID转换为颜色  
+            int nodeInt = int(nodeID);
+            vNodeID = vec4(
+                float((nodeInt >> 24) & 255) / 255.0,
+                float((nodeInt >> 16) & 255) / 255.0,
+                float((nodeInt >> 8) & 255) / 255.0,
+                float(nodeInt & 255) / 255.0
+            );
+            
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    fragmentShader: `
+        varying vec4 vGeometryIndex;
+        varying vec4 vNodeID;
+        
+        void main() {
+            // 使用奇偶像素分别存储geometryIndex和nodeID
+            // 如果(x+y)是偶数，输出geometryIndex；如果是奇数，输出nodeID
+            if (int(gl_FragCoord.x + gl_FragCoord.y) % 2 == 0) {
+                gl_FragColor = vGeometryIndex;
+            } else {
+                gl_FragColor = vNodeID;
+            }
+        }
+    `
+});
+
+// 创建线函数（使用双属性）
+function createLine(points, colors, lineWidth = 5, geometryIndex, nodeIDs) {
+    // 实际渲染用的线材质
+    const material = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        linewidth: lineWidth
+    });
+
+    // 创建几何体
+    const geometry = new THREE.BufferGeometry()
+    const line = new THREE.Line(geometry, material);
+
+    // 为每个顶点添加geometryIndex和nodeID属性
+    const pointArray = new Float32Array(points);
+    const colorArray = new Float32Array(colors);
+    const vertexCount = pointArray.length / 3;
+    const geometryIndexArray = new Float32Array(vertexCount);
+    const nodeIDArray = new Float32Array(vertexCount);
+
+    for (let i = 0; i < vertexCount; i++) {
+        geometryIndexArray[i] = parseInt(geometryIndex[i]);
+        nodeIDArray[i] = nodeIDs[i];
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(pointArray, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3, true));
+    geometry.setAttribute('geometryIndex', new THREE.BufferAttribute(geometryIndexArray, 1));
+    geometry.setAttribute('nodeID', new THREE.BufferAttribute(nodeIDArray, 1));
+
+    // 存储映射关系
+    // idToLine.set(nodeIDs[0], {
+    //     renderLine: line,
+    //     originalColor: colors[0]
+    // });
+
+    // 添加到场景
+    scene.add(line);
+
+    return line;
+}
+
+// 创建示例线条
+function createSampleLines() {
+    const colors = [
+        255,0,0,
+        255,0,0,
+        0,255,0,
+        0,255,0,
+        0,0,255,
+        0,0,255,
+    ];
+    const points = [
+        0, 0, 0, 1, 1, 1,
+        1, 1, 1, 1, 0, 2,
+        1, 0, 2, 2, 2, 2
+    ];
+    
+    // 测试大数值
+    const geometryIndex = [
+        23456789, 23456789,
+        87654321, 87654321,
+        147483647, 247483647, // 接近32位最大值
+    ];
+    const nodeIDs = [
+        1001, 1001,
+        2002, 2002,
+        3003, 3003,
+    ];
+    
+    createLine(points, colors, 5, geometryIndex, nodeIDs);
+}
+
+// 创建拾取渲染目标
+const pixelBuffer = new Uint8Array(16); // 4像素 * 4通道
+const pickingTexture = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
+
+// 处理点击事件（单次渲染 + 奇偶像素编码）
+function onMouseClick(event) {
+    const mouse = new THREE.Vector2();
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+    // 单次渲染获取两个值
+    renderer.setRenderTarget(pickingTexture);
+    scene.overrideMaterial = pickingMaterial;
+    renderer.render(scene, camera);
+    scene.overrideMaterial = null;
+
+    // 计算点击位置的像素坐标
+    const pixelX = Math.floor((mouse.x * 0.5 + 0.5) * window.innerWidth);
+    const pixelY = Math.floor((mouse.y * 0.5 + 0.5) * window.innerHeight);
+
+    // 读取2x2像素区域来确保获取到geometryIndex和nodeID
+    // 因为奇偶像素编码需要相邻像素
+    renderer.readRenderTargetPixels(
+        pickingTexture,
+        pixelX - 1,  // 向左偏移1像素
+        pixelY - 1,  // 向上偏移1像素
+        2, 2, pixelBuffer
+    );
+
+    // 从2x2像素中提取geometryIndex和nodeID
+    // 根据奇偶性选择正确的像素
+    const isEvenPixel = (pixelX + pixelY) % 2 === 0;
+    
+    let geometryColor, nodeColor;
+    
+    if (isEvenPixel) {
+        // 当前像素是偶数像素（存储geometryIndex）
+        // 从当前像素获取geometryIndex，从相邻像素获取nodeID
+        geometryColor = [
+            pixelBuffer[4],  // 右上角像素的R (当前像素)
+            pixelBuffer[5],  // 右上角像素的G
+            pixelBuffer[6],  // 右上角像素的B
+            pixelBuffer[7]   // 右上角像素的A
+        ];
+        nodeColor = [
+            pixelBuffer[8],  // 左下角像素的R (相邻像素)
+            pixelBuffer[9],  // 左下角像素的G
+            pixelBuffer[10], // 左下角像素的B
+            pixelBuffer[11]  // 左下角像素的A
+        ];
+    } else {
+        // 当前像素是奇数像素（存储nodeID）
+        // 从相邻像素获取geometryIndex，从当前像素获取nodeID
+        geometryColor = [
+            pixelBuffer[0],  // 左上角像素的R (相邻像素)
+            pixelBuffer[1],  // 左上角像素的G
+            pixelBuffer[2],  // 左上角像素的B
+            pixelBuffer[3]   // 左上角像素的A
+        ];
+        nodeColor = [
+            pixelBuffer[12], // 右下角像素的R (当前像素)
+            pixelBuffer[13], // 右下角像素的G
+            pixelBuffer[14], // 右下角像素的B
+            pixelBuffer[15]  // 右下角像素的A
+        ];
+    }
+
+    const result = decodeCompressedID(geometryColor, nodeColor);
+    const geometryID = result.x;
+    const nodeID = result.y;
+    
+    console.log('点击位置:', pixelX, pixelY, '奇偶性:', isEvenPixel ? '偶数' : '奇数');
+    console.log('geometryID:', geometryID, 'nodeID:', nodeID);
+
+    // 恢复渲染目标
+    renderer.setRenderTarget(null);
+
+    // 高亮选中的线条
+    idToLine.forEach((lineData, id) => {
+        if (id === nodeID) {
+            lineData.renderLine.material.color.set(0xffffff);
+            lineData.renderLine.material.linewidth = 8;
+            selectedLineId = id;
+        } else {
+            lineData.renderLine.material.color.set(lineData.originalColor);
+            lineData.renderLine.material.linewidth = document.getElementById('lineWidth').value;
+        }
+    });
+    
+    document.getElementById('selectedInfo').textContent =
+        `已选中线条 Geometry:${geometryID} Node:${nodeID}`;
+}
+
+        // 渲染循环
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 旋转场景
+            if (!rotationEnabled) {
+                scene.rotation.y += 0.005 * animationSpeed;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // 初始化
+        function init() {
+            createSampleLines();
+            window.addEventListener('click', onMouseClick, false);
+
+            // 响应窗口大小变化
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                pickingTexture.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            // 设置控件事件
+            document.getElementById('rotateScene').addEventListener('change', function (e) {
+                rotationEnabled = e.target.checked;
+            });
+
+            document.getElementById('lineWidth').addEventListener('input', function (e) {
+                const width = parseFloat(e.target.value);
+                idToLine.forEach((lineData, id) => {
+                    if (id !== selectedLineId) {
+                        lineData.renderLine.material.linewidth = width;
+                    }
+                });
+            });
+
+            document.getElementById('animationSpeed').addEventListener('input', function (e) {
+                animationSpeed = parseFloat(e.target.value);
+            });
+
+            animate();
+        }
+
+        init();
+    </script>
+</body>
+
+</html>

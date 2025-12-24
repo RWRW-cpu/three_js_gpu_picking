@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js 线条拾取系统（顶点属性）</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #f3f3f5 0%, #16213e 100%);
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 16px;
+            pointer-events: none;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(5px);
+        }
+
+        #selectedInfo {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px 25px;
+            border-radius: 10px;
+            font-size: 18px;
+            text-align: center;
+            min-width: 300px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(5px);
+        }
+
+        .controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 14px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(5px);
+        }
+
+        .controls h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+            padding-bottom: 5px;
+        }
+
+        .controls label {
+            display: block;
+            margin: 8px 0;
+        }
+
+        .controls input {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        .mode-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            background: #4CAF50;
+            box-shadow: 0 0 8px #4CAF50;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="info"><span class="mode-indicator"></span>点击线条来选中它们<br>当前模式: 渲染视图</div>
+    <div id="selectedInfo">未选中任何线条</div>
+
+    <div class="controls">
+        <h3>线条控制</h3>
+        <label>
+            <input type="checkbox" id="rotateScene" checked> 旋转场景
+        </label>
+        <label>
+            <input type="range" id="lineWidth" min="1" max="10" value="5" step="0.5"> 线条宽度
+        </label>
+        <label>
+            <input type="range" id="animationSpeed" min="0" max="2" value="0.5" step="0.1"> 动画速度
+        </label>
+    </div>
+
+    <script>
+        // 场景设置
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 10;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 存储线条映射关系
+        const idToLine = new Map();
+        let selectedLineId = null;
+        let rotationEnabled = true;
+        let animationSpeed = 0.5;
+
+
+// 修改decodeCompressedID函数为双属性版本
+function decodeCompressedID(geometryColor, nodeColor) {
+    const geometryValue = (geometryColor[0] << 24) + (geometryColor[1] << 16) + (geometryColor[2] << 8) + geometryColor[3];
+    const nodeValue = (nodeColor[0] << 24) + (nodeColor[1] << 16) + (nodeColor[2] << 8) + nodeColor[3];
+    
+    return new THREE.Vector2(geometryValue, nodeValue);
+}
+
+function compress(lineGeoID, lineNodeID) {
+    // 直接返回两个值，由着色器处理编码
+    return { lineGeoID, lineNodeID };
+}
+
+// 修改拾取材质，分别输出lineGeoID和lineNodeID
+const pickingMaterialGeometry = new THREE.ShaderMaterial({
+    vertexShader: `
+        attribute uint lineGeoID;
+        varying vec4 vLineGeoID;
+        
+        void main() {
+            vLineGeoID = vec4(
+                float((lineGeoID >> 24u) & 255u) / 255.0,
+                float((lineGeoID >> 16u) & 255u) / 255.0,
+                float((lineGeoID >> 8u) & 255u) / 255.0,
+                float(lineGeoID & 255u) / 255.0
+            );
+            
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    fragmentShader: `
+        varying vec4 vLineGeoID;
+        
+        void main() {
+            gl_FragColor = vLineGeoID;
+        }
+    `
+});
+
+const pickingMaterialNode = new THREE.ShaderMaterial({
+    vertexShader: `
+        attribute uint lineNodeID;
+        varying vec4 vLineNodeID;
+        
+        void main() {
+            vLineNodeID = vec4(
+                float((lineNodeID >> 24u) & 255u) / 255.0,
+                float((lineNodeID >> 16u) & 255u) / 255.0,
+                float((lineNodeID >> 8u) & 255u) / 255.0,
+                float(lineNodeID & 255u) / 255.0
+            );
+            
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    fragmentShader: `
+        varying vec4 vLineNodeID;
+        
+        void main() {
+            gl_FragColor = vLineNodeID;
+        }
+    `
+});
+
+// 创建线函数（使用双属性）
+function createLine(points, colors, lineWidth = 5, lineGeoID, lineNodeIDs) {
+    // 实际渲染用的线材质
+    const material = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        linewidth: lineWidth
+    });
+
+    // 创建几何体
+    const geometry = new THREE.BufferGeometry()
+    const line = new THREE.Line(geometry, material);
+
+    // 为每个顶点添加lineGeoID和lineNodeID属性
+    const pointArray = new Float32Array(points);
+    const colorArray = new Float32Array(colors);
+    const vertexCount = pointArray.length / 3;
+    const lineGeoIDArray = new Uint32Array(vertexCount);
+    const lineNodeIDArray = new Uint32Array(vertexCount);
+
+    for (let i = 0; i < vertexCount; i++) {
+        lineGeoIDArray[i] = (lineGeoID[i]);
+        lineNodeIDArray[i] = lineNodeIDs[i];
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(pointArray, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3, true));
+    geometry.setAttribute('lineGeoID', new THREE.BufferAttribute(lineGeoIDArray, 1));
+    geometry.setAttribute('lineNodeID', new THREE.BufferAttribute(lineNodeIDArray, 1));
+
+    // 存储映射关系
+    // idToLine.set(lineNodeIDs[0], {
+    //     renderLine: line,
+    //     originalColor: colors[0]
+    // });
+
+    // 添加到场景
+    scene.add(line);
+
+    return line;
+}
+
+// 创建示例线条
+function createSampleLines() {
+    const colors = [
+        255,0,0,
+        255,0,0,
+        0,255,0,
+        0,255,0,
+        0,0,255,
+        0,0,255,
+    ];
+    const points = [
+        0, 0, 0, 1, 1, 1,
+        1, 1, 1, 1, 0, 2,
+        1, 0, 2, 2, 2, 2
+    ];
+    
+    // 测试大数值
+    const lineGeoID = [
+        12345678, 12345678,
+        18765432, 18765432,
+        4294967294 , 4294967294 , // 接近32位最大值
+    ];
+    const lineNodeIDs = [
+        12345678, 12345678,
+        2002, 2002,
+        3003, 3003,
+    ];
+    
+    createLine(points, colors, 5, lineGeoID, lineNodeIDs);
+}
+
+// 创建拾取渲染目标
+const pixelBuffer = new Uint8Array(16); // 4像素 * 4通道
+
+const pixelSize = 1;
+const pickingTexture = new THREE.WebGLRenderTarget(pixelSize, pixelSize
+    // , {
+    //     minFilter: THREE.NearestFilter,
+    //     magFilter: THREE.NearestFilter,
+    //     format: THREE.RGBAFormat,
+    //     type: THREE.UnsignedByteType,
+    //     depthBuffer: false,
+    //     stencilBuffer: false
+    // }
+);
+// 处理点击事件（单次渲染 + 奇偶像素编码）
+function onMouseClick(event) {
+    let ratio = window.devicePixelRatio;
+
+    camera.setViewOffset(
+        window.innerWidth * ratio,
+        window.innerHeight * ratio,
+        event.clientX * ratio ,  // 中心点向左偏移1像素
+        event.clientY * ratio ,  // 中心点向上偏移1像素
+        pixelSize,                        // 宽度改为pixelSize
+        pixelSize                         // 高度改为pixelSize
+    );
+
+    const pixelBufferGeometry = new  Uint8Array(4*pixelSize*pixelSize);
+    const pixelBufferNode = new  Uint8Array(4*pixelSize*pixelSize);
+
+    // 第一次渲染：获取lineGeoID
+    renderer.renderLimitNum = 1; // 限制渲染次数，避免多次调用
+    renderer.setRenderTarget(pickingTexture);
+    scene.overrideMaterial = pickingMaterialGeometry;
+    renderer.render(scene, camera);
+    
+    renderer.readRenderTargetPixels(
+        pickingTexture,
+        0, 0,
+        pixelSize, pixelSize, pixelBufferGeometry
+    );
+
+    // 第二次渲染：获取lineNodeID
+    scene.overrideMaterial = pickingMaterialNode;
+    renderer.render(scene, camera);
+    
+    renderer.readRenderTargetPixels(
+        pickingTexture,
+        0, 0,
+        pixelSize, pixelSize, pixelBufferNode
+    );
+
+    scene.renderLimitNum =100;
+    scene.overrideMaterial = null;
+    camera.clearViewOffset();
+    console.log('pixelBufferGeometry:', pixelBufferGeometry);
+    console.log('pixelBufferNode:', pixelBufferNode);
+
+    const geometryID = (pixelBufferGeometry[0] << 24 | pixelBufferGeometry[1] << 16 | pixelBufferGeometry[2] << 8 | pixelBufferGeometry[3]) >>> 0;
+    const nodeID = (pixelBufferNode[0] << 24 | pixelBufferNode[1] << 16 | pixelBufferNode[2] << 8 | pixelBufferNode[3]) >>> 0;
+    
+    console.log('geometryID:', geometryID, 'nodeID:', nodeID);
+
+    // 恢复渲染目标
+    renderer.setRenderTarget(null);
+
+    // 高亮选中的线条
+    idToLine.forEach((lineData, id) => {
+        if (id === nodeID) {
+            lineData.renderLine.material.color.set(0xffffff);
+            lineData.renderLine.material.linewidth = 8;
+            selectedLineId = id;
+        } else {
+            lineData.renderLine.material.color.set(lineData.originalColor);
+            lineData.renderLine.material.linewidth = document.getElementById('lineWidth').value;
+        }
+    });
+    
+    document.getElementById('selectedInfo').textContent =
+        `已选中线条 Geometry:${geometryID} Node:${nodeID}`;
+}
+
+        // 渲染循环
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 旋转场景
+            if (!rotationEnabled) {
+                scene.rotation.y += 0.005 * animationSpeed;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // 初始化
+        function init() {
+            createSampleLines();
+            window.addEventListener('click', onMouseClick, false);
+
+            // 响应窗口大小变化
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            // 设置控件事件
+            document.getElementById('rotateScene').addEventListener('change', function (e) {
+                rotationEnabled = e.target.checked;
+            });
+
+            document.getElementById('lineWidth').addEventListener('input', function (e) {
+                const width = parseFloat(e.target.value);
+                idToLine.forEach((lineData, id) => {
+                    if (id !== selectedLineId) {
+                        lineData.renderLine.material.linewidth = width;
+                    }
+                });
+            });
+
+            document.getElementById('animationSpeed').addEventListener('input', function (e) {
+                animationSpeed = parseFloat(e.target.value);
+            });
+
+            animate();
+        }
+
+        init();
+    </script>
+</body>
+
+</html>
